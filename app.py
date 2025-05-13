@@ -1,30 +1,24 @@
-# ✅ REWRITTEN FOR OPENROUTER (FREE LLM)
-# Fully replaces OpenAI with OpenRouter API (compatible with Mistral, LLaMA, etc.)
-# Step-by-step deployment instructions follow below this code.
-
 import streamlit as st
 import requests
 
-# 🔐 Read your OpenRouter API key securely from Streamlit secrets
-API_KEY = st.secrets["OPENROUTER_KEY"]
+# --- Streamlit App Setup ---
+st.set_page_config(page_title="Unified AI", layout="centered")
+st.title("🤖 Unified AI: Infra Assistant")
 
-# Azure, SNOW, GitLab setup — unchanged
+# --- Secrets ---
+API_KEY = st.secrets["OPENROUTER_KEY"]
 AZURE_ACCESS_TOKEN = st.secrets["AZURE_ACCESS_TOKEN"]
 AZURE_SUBSCRIPTION_ID = "unified-ai-demo"
 AZURE_RESOURCE_GROUP = "unified-ai-prototype"
 
-SNOW_INSTANCE = "https://dev203611.service-now.com"
-SNOW_USER = "admin"
-SNOW_PASSWORD = "Nachet@123$$$$$$"
+SNOW_INSTANCE = st.secrets["SNOW_INSTANCE"]
+SNOW_USER = st.secrets["SNOW_USER"]
+SNOW_PASSWORD = st.secrets["SNOW_PASSWORD"]
 
 GITLAB_TOKEN = st.secrets["GITLAB_TOKEN"]
-GITLAB_PROJECT_ID = "12345678"
+GITLAB_PROJECT_ID = st.secrets["GITLAB_PROJECT_ID"]
 
-st.set_page_config(page_title="Unified AI", layout="centered")
-st.title("🤖 Unified AI: Infra Assistant")
-
-# Azure Logs
-
+# --- Fetch Azure Logs ---
 def get_azure_logs(query):
     vm_url = f"https://management.azure.com/subscriptions/{AZURE_SUBSCRIPTION_ID}/resourceGroups/{AZURE_RESOURCE_GROUP}/providers/Microsoft.Compute/virtualMachines?api-version=2021-07-01"
     headers = {'Authorization': f"Bearer {AZURE_ACCESS_TOKEN}"}
@@ -45,9 +39,7 @@ def get_azure_logs(query):
     else:
         return f"Error fetching Azure VMs. Status code: {response.status_code}"
 
-
-# GitLab
-
+# --- Fetch GitLab Pipelines ---
 def get_pipeline_info(query):
     gitlab_url = f"https://gitlab.com/api/v4/projects/{GITLAB_PROJECT_ID}/pipelines"
     headers = {'Private-Token': GITLAB_TOKEN}
@@ -63,9 +55,7 @@ def get_pipeline_info(query):
     else:
         return f"Error fetching GitLab data. Status code: {response.status_code}"
 
-
-# ServiceNow
-
+# --- Fetch ServiceNow Incidents ---
 def get_incidents(query):
     url = f"{SNOW_INSTANCE}/api/now/table/incident?sysparm_query=short_description={query}&sysparm_limit=5"
     auth = (SNOW_USER, SNOW_PASSWORD)
@@ -84,30 +74,26 @@ def get_incidents(query):
     else:
         return f"Error fetching ServiceNow data. Status code: {response.status_code}"
 
-
-# Prompt builder
-
+# --- Prompt Construction ---
 def create_prompt(query, azure_data, servicenow_data, gitlab_data):
     return f"""
-    You are an intelligent assistant analyzing customer infrastructure.
+You are an intelligent assistant analyzing customer infrastructure.
 
-    Customer Query: {query}
+Customer Query: {query}
 
-    --- Azure Resources ---
-    {azure_data}
+--- Azure Resources ---
+{azure_data}
 
-    --- ServiceNow Tickets ---
-    {servicenow_data}
+--- ServiceNow Tickets ---
+{servicenow_data}
 
-    --- GitLab Pipelines ---
-    {gitlab_data}
+--- GitLab Pipelines ---
+{gitlab_data}
 
-    Provide a summary and actionable insights.
-    """
+Provide a summary and actionable insights.
+"""
 
-
-# 🔁 Call OpenRouter LLM
-
+# --- LLM Call to Claude via OpenRouter ---
 def ask_openrouter(prompt):
     try:
         headers = {
@@ -115,7 +101,7 @@ def ask_openrouter(prompt):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "mistralai/mistral-7b-instruct",  # You can change to llama-3, etc.
+            "model": "anthropic/claude-3-sonnet-20240229",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 300
         }
@@ -125,8 +111,7 @@ def ask_openrouter(prompt):
     except Exception as e:
         return f"Error communicating with OpenRouter: {e}"
 
-
-# UI
+# --- User Input and Workflow ---
 query = st.text_input("Enter your customer issue/query:")
 
 if query:
