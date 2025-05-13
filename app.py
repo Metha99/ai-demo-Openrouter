@@ -1,111 +1,130 @@
 import streamlit as st
 import requests
-import re
+from datetime import datetime, timedelta
 
-# Streamlit secrets (store securely at Settings > Secrets)
+# Read secrets
 API_KEY = st.secrets["OPENROUTER_KEY"]
-
 AZURE_ACCESS_TOKEN = st.secrets["AZURE_ACCESS_TOKEN"]
-AZURE_SUBSCRIPTION_ID = "unified-ai-demo"
-AZURE_RESOURCE_GROUP = "unified-ai-prototype"
+AZURE_SUBSCRIPTION_ID = st.secrets["AZURE_SUBSCRIPTION_ID"]
+AZURE_RESOURCE_GROUP = st.secrets["AZURE_RESOURCE_GROUP"]
+AZURE_VM_NAME = st.secrets["AZURE_VM_NAME"]
 
 SNOW_INSTANCE = st.secrets["SNOW_INSTANCE"]
 SNOW_USER = st.secrets["SNOW_USER"]
 SNOW_PASSWORD = st.secrets["SNOW_PASSWORD"]
 
 GITLAB_TOKEN = st.secrets["GITLAB_TOKEN"]
-GITLAB_PROJECT_ID = "12345678"  # Replace with your actual project ID
+GITLAB_PROJECT_ID = st.secrets["GITLAB_PROJECT_ID"]
 
 st.set_page_config(page_title="Unified AI", layout="centered")
 st.title("🤖 Unified AI: Infra Assistant")
 
-# ✅ Azure logs
-def get_azure_logs(query):
-    vm_url = f"https://management.azure.com/subscriptions/{AZURE_SUBSCRIPTION_ID}/resourceGroups/{AZURE_RESOURCE_GROUP}/providers/Microsoft.Compute/virtualMachines?api-version=2021-07-01"
-    headers = {'Authorization': f"Bearer {AZURE_ACCESS_TOKEN}"}
-    response = requests.get(vm_url, headers=headers)
-
-    if response.status_code != 200:
-        return f"Error fetching Azure VMs. Status: {response.status_code}, Details: {response.text}"
-
-    vm_data = response.json()
-    vm_statuses = []
-    for vm in vm_data.get('value', []):
-        vm_name = vm['name']
-        status_url = f"https://management.azure.com/subscriptions/{AZURE_SUBSCRIPTION_ID}/resourceGroups/{AZURE_RESOURCE_GROUP}/providers/Microsoft.Compute/virtualMachines/{vm_name}/instanceView?api-version=2021-07-01"
-        status_response = requests.get(status_url, headers=headers)
-        if status_response.status_code == 200:
-            vm_status = status_response.json()
-            try:
-                status = vm_status['statuses'][1]['displayStatus']
-                vm_statuses.append(f"VM: {vm_name} - Status: {status}")
-            except Exception as e:
-                vm_statuses.append(f"VM: {vm_name} - Status unknown: {e}")
-        else:
-            vm_statuses.append(f"VM: {vm_name} - Failed to fetch status. Code: {status_response.status_code}")
-    return "\n".join(vm_statuses)
-
-
-# ✅ GitLab: Parse pipeline ID from user input
-def get_pipeline_info(query):
-    match = re.search(r"#?(\d{6,})", query)
-    if match:
-        pipeline_id = match.group(1)
-    else:
-        return "No valid pipeline ID found in query."
-
-    gitlab_url = f"https://gitlab.com/api/v4/projects/{GITLAB_PROJECT_ID}/pipelines/{pipeline_id}"
-    headers = {'Private-Token': GITLAB_TOKEN}
-    response = requests.get(gitlab_url, headers=headers)
-
-    if response.status_code == 200:
-        data = response.json()
-        status = data.get('status', 'Unknown')
-        ref = data.get('ref', 'N/A')
-        return f"Pipeline #{pipeline_id} on branch `{ref}` has status: {status}"
-    else:
-        return f"GitLab pipeline fetch error {response.status_code}: {response.text}"
-
-
-# ✅ SNOW with debugging
-def get_incidents(query):
-    url = f"{SNOW_INSTANCE}/api/now/table/incident?sysparm_query=short_description={query}&sysparm_limit=5"
-    auth = (SNOW_USER, SNOW_PASSWORD)
-    response = requests.get(url, auth=auth)
-
-    if response.status_code != 200:
-        return f"Error fetching ServiceNow data. Code: {response.status_code}, Details: {response.text}"
-
+# ✅ Azure VM status
+def get_azure_logs():
     try:
-        incidents = response.json()['result']
-        if not incidents:
-            return "No incidents found."
-        return "\n".join([f"Incident: {i.get('short_description')} - Status: {i.get('state')}" for i in incidents])
-    except Exception as e:
-        return f"ServiceNow parse error: {e}"
+        vm_url = f"https://management.azure.com/subscriptions/{AZURE_SUBSCRIPTION_ID}/resourceGroups/{AZURE_RESOURCE_GROUP}/providers/Microsoft.Compute/virtualMachines?api-version=2021-07-01"
+        headers = {'Authorization': f"Bearer {AZURE_ACCESS_TOKEN}"}
+        response = requests.get(vm_url, headers=headers)
+        if response.status_code != 200:
+            return f"Azure VM fetch error: {response.status_code}"
 
+        data = response.json()
+        results = []
+        for vm in data['value']:
+            name = vm['name']
+            status_url = f"https://management.azure.com/subscriptions/{AZURE_SUBSCRIPTION_ID}/resourceGroups/{AZURE_RESOURCE_GROUP}/providers/Microsoft.Compute/virtualMachines/{name}/instanceView?api-version=2021-07-01"
+            status_response = requests.get(status_url, headers=headers)
+            if status_response.status_code == 200:
+                status = status_response.json()
+                state = status['statuses'][1]['displayStatus']
+                results.append(f"VM: {name}, Status: {state}")
+        return "\n".join(results)
+    except Exception as e:
+        return f"Error: {e}"
+
+# ✅ Azure Monitor metrics (CPU)
+def get_vm_metrics():
+    try:
+        now = datetime.utcnow()
+        start = (now - timedelta(minutes=30)).isoformat() + "Z"
+        end = now.isoformat() + "Z"
+
+        url = f"https://management.azure.com/subscriptions/{AZURE_SUBSCRIPTION_ID}/resourceGroups/{AZURE_RESOURCE_GROUP}/providers/Microsoft.Compute/virtualMachines/{AZURE_VM_NAME}/providers/microsoft.insights/metrics"
+        params = {
+            "api-version": "2018-01-01",
+            "metricnames": "Percentage CPU",
+            "timespan": f"{start}/{end}",
+            "interval": "PT5M",
+            "aggregation": "Average"
+        }
+
+        headers = {"Authorization": f"Bearer {AZURE_ACCESS_TOKEN}"}
+        response = requests.get(url, headers=headers, params=params)
+
+        if response.status_code != 200:
+            return f"⚠️ CPU metric fetch failed: {response.status_code} - {response.text}"
+
+        metrics = response.json().get("value", [])
+        if not metrics:
+            return "⚠️ No CPU metrics found."
+
+        data = metrics[0]["timeseries"][0]["data"]
+        values = [f"{d['timeStamp']} — CPU: {d.get('average', 0):.2f}%" for d in data if 'average' in d]
+        return "\n".join(values)
+    except Exception as e:
+        return f"Error getting metrics: {e}"
+
+# ✅ ServiceNow incidents
+def get_incidents(query):
+    try:
+        url = f"{SNOW_INSTANCE}/api/now/table/incident?sysparm_query=short_description={query}&sysparm_limit=5"
+        response = requests.get(url, auth=(SNOW_USER, SNOW_PASSWORD))
+        if response.status_code != 200:
+            return f"ServiceNow error: {response.status_code}"
+        data = response.json().get("result", [])
+        if not data:
+            return "No incidents found."
+        return "\n".join([f"{i['short_description']} — State: {i['state']}" for i in data])
+    except Exception as e:
+        return f"SNOW Error: {e}"
+
+# ✅ GitLab pipeline status
+def get_pipeline_info():
+    try:
+        url = f"https://gitlab.com/api/v4/projects/{GITLAB_PROJECT_ID}/pipelines"
+        headers = {'Private-Token': GITLAB_TOKEN}
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            return f"GitLab error: {response.status_code}"
+        data = response.json()
+        if not data:
+            return "No pipelines found."
+        latest = data[0]
+        return f"Pipeline #{latest['id']} — Status: {latest['status']}"
+    except Exception as e:
+        return f"GitLab error: {e}"
 
 # ✅ Prompt builder
-def create_prompt(query, azure_data, servicenow_data, gitlab_data):
+def create_prompt(query, azure_logs, metrics, snow, gitlab):
     return f"""
-You are an intelligent assistant analyzing customer infrastructure.
-
 Customer Query: {query}
 
---- Azure Resources ---
-{azure_data}
+--- Azure VM Status ---
+{azure_logs}
+
+--- Azure VM Metrics ---
+{metrics}
 
 --- ServiceNow Tickets ---
-{servicenow_data}
+{snow}
 
 --- GitLab Pipelines ---
-{gitlab_data}
+{gitlab}
 
-Provide a summary and actionable insights.
+As an infrastructure assistant, summarize key issues and provide specific next steps.
 """
 
-
-# ✅ OpenRouter API (Claude 3 Sonnet)
+# ✅ LLM call
 def ask_openrouter(prompt):
     try:
         headers = {
@@ -115,25 +134,24 @@ def ask_openrouter(prompt):
         payload = {
             "model": "anthropic/claude-3-sonnet-20240229",
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 500
+            "max_tokens": 400
         }
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
-        result = response.json()
-        return result['choices'][0]['message']['content'].strip()
+        return response.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
-        return f"Error communicating with OpenRouter: {e}"
+        return f"LLM error: {e}"
 
-
-# ✅ UI input
+# ✅ Streamlit UI
 query = st.text_input("Enter your customer issue/query:")
 
 if query:
-    with st.spinner("Analyzing data sources..."):
-        azure = get_azure_logs(query)
+    with st.spinner("Analyzing infrastructure..."):
+        azure = get_azure_logs()
+        metrics = get_vm_metrics()
         snow = get_incidents(query)
-        gitlab = get_pipeline_info(query)
-        final_prompt = create_prompt(query, azure, snow, gitlab)
-        response = ask_openrouter(final_prompt)
+        gitlab = get_pipeline_info()
+        prompt = create_prompt(query, azure, metrics, snow, gitlab)
+        response = ask_openrouter(prompt)
 
     st.success("Unified AI Response:")
     st.markdown(response)
