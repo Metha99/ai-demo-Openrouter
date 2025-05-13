@@ -17,7 +17,7 @@ GITLAB_TOKEN = st.secrets["GITLAB_TOKEN"]
 GITLAB_PROJECT_ID = st.secrets["GITLAB_PROJECT_ID"]
 
 st.set_page_config(page_title="Unified AI", layout="centered")
-st.title("🤖 Unified AI: Infra Assistant")
+st.title("🤖 Unified AI")
 
 # ✅ Azure VM status
 def get_azure_logs():
